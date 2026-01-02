@@ -12,8 +12,15 @@ class SafetensorsCompatibleTensor:
 
 class SafetensorsCompatibleBinaryLoader:
     def __init__(self, path, device):
-        print("Detected non-safetensors files, which may cause slower loading. It's recommended to convert it to a safetensors file.")
-        self.state_dict = torch.load(path, weights_only=True, map_location=device)
+        # NOTE: we ignore `device` here and force CPU loading to avoid
+        # blowing up GPU VRAM at model-load time.
+        print("Detected non-safetensors files, which may cause slower loading. "
+              "It's recommended to convert it to a safetensors file.")
+        self.state_dict = torch.load(
+            path,
+            weights_only=True,
+            map_location="cpu"   # <<< CHANGED: always CPU
+        )
         
     def keys(self):
         return self.state_dict.keys()
@@ -28,6 +35,7 @@ class SafetensorsCompatibleBinaryLoader:
 class DiskMap:
 
     def __init__(self, path, device, torch_dtype=None, state_dict_converter=None, buffer_size=10**9):
+        # `device` is still accepted but we won't use it to load tensors onto GPU.
         self.path = path if isinstance(path, list) else [path]
         self.device = device
         self.torch_dtype = torch_dtype
@@ -44,30 +52,53 @@ class DiskMap:
         self.rename_dict = self.fetch_rename_dict(state_dict_converter)
         
     def flush_files(self):
+        # Always open files on CPU. We never want safetensors mapped directly to CUDA here.
+        cpu_device = "cpu"
+
         if len(self.files) == 0:
             for path in self.path:
                 if path.endswith(".safetensors"):
-                    self.files.append(safe_open(path, framework="pt", device=str(self.device)))
+                    self.files.append(
+                        safe_open(path, framework="pt", device=cpu_device)  # <<< CHANGED
+                    )
                 else:
-                    self.files.append(SafetensorsCompatibleBinaryLoader(path, device=self.device))
+                    self.files.append(
+                        SafetensorsCompatibleBinaryLoader(path, device=cpu_device)  # <<< CHANGED
+                    )
         else:
             for i, path in enumerate(self.path):
                 if path.endswith(".safetensors"):
-                    self.files[i] = safe_open(path, framework="pt", device=str(self.device))
+                    self.files[i] = safe_open(
+                        path, framework="pt", device=cpu_device  # <<< CHANGED
+                    )
         self.num_params = 0
 
     def __getitem__(self, name):
-        if self.rename_dict is not None: name = self.rename_dict[name]
+        if self.rename_dict is not None:
+            name = self.rename_dict[name]
+
         file_id = self.name_map[name]
         param = self.files[file_id].get_tensor(name)
-        if self.torch_dtype is not None and isinstance(param, torch.Tensor):
-            param = param.to(self.torch_dtype)
-        if isinstance(param, torch.Tensor) and param.device == "cpu":
-            param = param.clone()
+
+        # Make sure tensors stay on CPU here, and only adjust dtype.
         if isinstance(param, torch.Tensor):
+            # If for any reason it ended up on cuda, pull it back.
+            if param.device.type != "cpu":
+                param = param.to("cpu")
+
+            if self.torch_dtype is not None:
+                # Only change dtype, not device
+                param = param.to(self.torch_dtype)
+
+            # Optional: clone to detach from underlying mmap / storage, same as original
+            if param.device.type == "cpu":
+                param = param.clone()
+
             self.num_params += param.numel()
+
         if self.num_params > self.buffer_size:
             self.flush_files()
+
         return param
 
     def fetch_rename_dict(self, state_dict_converter):
