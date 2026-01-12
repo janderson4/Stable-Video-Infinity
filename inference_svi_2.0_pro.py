@@ -112,7 +112,7 @@ class StreamingVideoProcessor:
                 num_motion_latent=self.num_motion_latent,
                 cfg_scale=self.cfg_scale,
                 num_inference_steps=self.num_steps,
-                boundary=self.boundary,
+                switch_DiT_boundary=self.boundary,
             )
             video_clip = video_clip_dict["video"]
             if self.num_motion_latent > 0:
