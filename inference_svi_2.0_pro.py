@@ -11,7 +11,7 @@ from diffsynth.utils.data import save_video
 from diffsynth.pipelines.wan_video_svi_pro import WanVideoSviProPipeline, ModelConfig
 
 class StreamingVideoProcessor:
-    def __init__(self, lora_path_high="",lora_path_low="", use_anchor=False, seed_multiplier=123, num_motion_frame=1,num_motion_latent=2, num_overlap_frame=1, cfg_scale=7.0, num_steps=10, boundary=0.85, sigma_shift=5.0):
+    def __init__(self, lora_path_high="",lora_path_low="", use_anchor=False, seed_multiplier=123, num_motion_frame=1,num_motion_latent=2, num_overlap_frame=1, cfg_scale=7.0, num_steps=10, boundary=0.85, sigma_shift=5.0, motion_bucket_id=None):
         self.lora_path_high = lora_path_high
         self.lora_path_low = lora_path_low
         self.pipe = None
@@ -33,6 +33,7 @@ class StreamingVideoProcessor:
         self.num_steps = num_steps
         self.boundary = boundary
         self.sigma_shift = sigma_shift
+        self.motion_bucket_id = motion_bucket_id
         
     def initialize_pipeline(self):
         """Initialize the WanVideo pipeline"""
@@ -123,6 +124,7 @@ class StreamingVideoProcessor:
                 num_inference_steps=self.num_steps,
                 switch_DiT_boundary=self.boundary,
                 sigma_shift=self.sigma_shift,
+                motion_bucket_id=self.motion_bucket_id,
             )
             video_clip = video_clip_dict["video"]
             if self.num_motion_latent > 0:
@@ -309,6 +311,12 @@ def main():
         action="store_true",
         help="Disable the high noise LoRA model for this generation"
     )
+    gen_parser.add_argument(
+        "--motion_bucket_id",
+        type=int,
+        default=None,
+        help="Motion bucket ID for controlling motion magnitude (e.g., 127)"
+    )
     
     while True:
         try:
@@ -337,6 +345,7 @@ def main():
             processor.num_steps = gen_args.num_steps
             processor.boundary = gen_args.boundary
             processor.sigma_shift = gen_args.sigma_shift
+            processor.motion_bucket_id = gen_args.motion_bucket_id
             
             # Create output directory
             os.makedirs(gen_args.output_root, exist_ok=True)
