@@ -12,10 +12,12 @@ from diffsynth.pipelines.wan_video_svi_pro import WanVideoSviProPipeline, ModelC
 
 class StreamingVideoProcessor:
     def __init__(self, lora_path_high="",lora_path_low="", use_anchor=False, seed_multiplier=123, num_motion_frame=1,num_motion_latent=2, num_overlap_frame=1, cfg_scale=7.0, num_steps=10, boundary=0.85):
+    def __init__(self, lora_path_high="",lora_path_low="", use_anchor=False, seed_multiplier=123, num_motion_frame=1,num_motion_latent=2, num_overlap_frame=1, cfg_scale=7.0, num_steps=10, boundary=0.85, sigma_shift=5.0):
         self.lora_path_high = lora_path_high
         self.lora_path_low = lora_path_low
         self.pipe = None
         self.initialize_pipeline()
+        self.current_high_lora_alpha = 1.0
         
         # Configuration
         self.frames_per_clip = 81  # Frames in each clip
@@ -31,6 +33,7 @@ class StreamingVideoProcessor:
         self.cfg_scale = cfg_scale
         self.num_steps = num_steps
         self.boundary = boundary
+        self.sigma_shift = sigma_shift
         
     def initialize_pipeline(self):
         """Initialize the WanVideo pipeline"""
@@ -70,8 +73,15 @@ class StreamingVideoProcessor:
             print(f"Error loading prompts from {prompt_file_path}: {e}")
             return []
     
-    def generate_streaming_video(self, input_image_path, prompt_path, output_dir):
+    def generate_streaming_video(self, input_image_path, prompt_path, output_dir, disable_high_noise_lora=False):
         """Generate streaming video using multiple prompts"""
+        # Update LoRA alpha if needed
+        target_alpha = 0.0 if disable_high_noise_lora else 1.0
+        if self.current_high_lora_alpha != target_alpha:
+            print(f"Switching High Noise LoRA alpha to {target_alpha}")
+            self.pipe.load_lora(self.pipe.dit, self.lora_path_high, alpha=target_alpha)
+            self.current_high_lora_alpha = target_alpha
+
         sample_name = os.path.dirname(input_image_path).split("/")[-1]
         print(f"\nProcessing sample: {sample_name}")
         if not os.path.exists(input_image_path):
@@ -113,6 +123,7 @@ class StreamingVideoProcessor:
                 cfg_scale=self.cfg_scale,
                 num_inference_steps=self.num_steps,
                 switch_DiT_boundary=self.boundary,
+                sigma_shift=self.sigma_shift,
             )
             video_clip = video_clip_dict["video"]
             if self.num_motion_latent > 0:
@@ -288,6 +299,17 @@ def main():
         default=0.85,
         help="high to low model sigma boundary (0 to 1)"
     )
+    gen_parser.add_argument(
+        "--sigma_shift",
+        type=float,
+        default=5.0,
+        help="Timestep offset parameter (default: 5.0)"
+    )
+    gen_parser.add_argument(
+        "--disable_high_noise_lora",
+        action="store_true",
+        help="Disable the high noise LoRA model for this generation"
+    )
     
     while True:
         try:
@@ -315,11 +337,12 @@ def main():
             processor.cfg_scale = gen_args.cfg_scale
             processor.num_steps = gen_args.num_steps
             processor.boundary = gen_args.boundary
+            processor.sigma_shift = gen_args.sigma_shift
             
             # Create output directory
             os.makedirs(gen_args.output_root, exist_ok=True)
             
-            processor.generate_streaming_video(gen_args.ref_image_path, gen_args.prompt_path, gen_args.output_root)
+            processor.generate_streaming_video(gen_args.ref_image_path, gen_args.prompt_path, gen_args.output_root, disable_high_noise_lora=gen_args.disable_high_noise_lora)
             print("Generation completed.")
             
         except ValueError as e:
