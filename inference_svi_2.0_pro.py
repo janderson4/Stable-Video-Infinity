@@ -11,7 +11,7 @@ from diffsynth.utils.data import save_video
 from diffsynth.pipelines.wan_video_svi_pro import WanVideoSviProPipeline, ModelConfig
 
 class StreamingVideoProcessor:
-    def __init__(self, lora_path_high="",lora_path_low="", use_anchor=False, seed_multiplier=123, num_motion_frame=1,num_motion_latent=2, num_overlap_frame=1, cfg_scale=7.0, num_steps=10, boundary=0.85, sigma_shift=5.0, motion_bucket_id=None, downscale=1):
+    def __init__(self, lora_path_high="",lora_path_low="", use_anchor=False, seed_multiplier=123, num_motion_frame=1,num_motion_latent=2, num_overlap_frame=1, cfg_scale=7.0, num_steps=10, boundary=0.85, sigma_shift=5.0, motion_bucket_id=None, downscale=1, num_steps_full=1):
         self.lora_path_high = lora_path_high
         self.lora_path_low = lora_path_low
         self.pipe = None
@@ -35,6 +35,7 @@ class StreamingVideoProcessor:
         self.sigma_shift = sigma_shift
         self.motion_bucket_id = motion_bucket_id
         self.downscale = downscale
+        self.num_steps_full = num_steps_full
         
     def initialize_pipeline(self):
         """Initialize the WanVideo pipeline"""
@@ -127,6 +128,7 @@ class StreamingVideoProcessor:
                 sigma_shift=self.sigma_shift,
                 motion_bucket_id=self.motion_bucket_id,
                 downscale=self.downscale,
+                num_steps_full=self.num_steps_full,
             )
             video_clip = video_clip_dict["video"]
             if self.num_motion_latent > 0:
@@ -325,6 +327,12 @@ def main():
         default=1,
         help="Downscaling factor for diffusion process (except last step)"
     )
+    gen_parser.add_argument(
+        "--num_steps_full",
+        type=int,
+        default=1,
+        help="Number of steps to perform at full resolution when downscaling is enabled"
+    )
     
     while True:
         try:
@@ -355,6 +363,7 @@ def main():
             processor.sigma_shift = gen_args.sigma_shift
             processor.motion_bucket_id = gen_args.motion_bucket_id
             processor.downscale = gen_args.downscale
+            processor.num_steps_full = gen_args.num_steps_full
             
             # Create output directory
             os.makedirs(gen_args.output_root, exist_ok=True)

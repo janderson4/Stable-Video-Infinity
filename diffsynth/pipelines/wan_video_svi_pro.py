@@ -188,7 +188,11 @@ class WanVideoSviProPipeline(BasePipeline):
 
     def upscale_tensor(self, x, scale):
         if isinstance(x, torch.Tensor) and x.ndim == 5:
-            return x.repeat_interleave(scale, dim=3).repeat_interleave(scale, dim=4)
+            B, C, F, H, W = x.shape
+            x_reshaped = rearrange(x, "b c f h w -> (b f) c h w")
+            x_up = torch.nn.functional.interpolate(x_reshaped, scale_factor=scale, mode='bilinear', align_corners=False)
+            x_out = rearrange(x_up, "(b f) c h w -> b c f h w", b=B)
+            return x_out
         return x
 
     @torch.no_grad()
@@ -268,6 +272,7 @@ class WanVideoSviProPipeline(BasePipeline):
         prev_last_latent: Optional[torch.Tensor] = None,
         num_motion_latent: Optional[int] = 1,
         downscale: int = 1,
+        num_steps_full: int = 1,
     ):
         # Scheduler
         self.scheduler.set_timesteps(num_inference_steps, denoising_strength=denoising_strength, shift=sigma_shift)
@@ -329,7 +334,7 @@ class WanVideoSviProPipeline(BasePipeline):
         models = {name: getattr(self, name) for name in self.in_iteration_models}
         for progress_id, timestep in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
             # Check for last step upscaling
-            if downscale > 1 and progress_id == len(self.scheduler.timesteps) - 1:
+            if downscale > 1 and progress_id == max(0, len(self.scheduler.timesteps) - num_steps_full):
                 latents = inputs_shared["latents"]
                 latents_upscaled = self.upscale_tensor(latents, downscale)
                 inputs_shared = inputs_shared_full
