@@ -11,7 +11,7 @@ from diffsynth.utils.data import save_video
 from diffsynth.pipelines.wan_video_svi_pro import WanVideoSviProPipeline, ModelConfig
 
 class StreamingVideoProcessor:
-    def __init__(self, lora_path_high="",lora_path_low="", use_anchor=False, seed_multiplier=123, num_motion_frame=1,num_motion_latent=2, num_overlap_frame=1, cfg_scale=7.0, num_steps=10, boundary=0.85, sigma_shift=5.0, motion_bucket_id=None):
+    def __init__(self, lora_path_high="",lora_path_low="", use_anchor=False, seed_multiplier=123, num_motion_frame=1,num_motion_latent=2, num_overlap_frame=1, cfg_scale=7.0, num_steps=10, boundary=0.85, sigma_shift=5.0, motion_bucket_id=None, downscale=1):
         self.lora_path_high = lora_path_high
         self.lora_path_low = lora_path_low
         self.pipe = None
@@ -34,6 +34,7 @@ class StreamingVideoProcessor:
         self.boundary = boundary
         self.sigma_shift = sigma_shift
         self.motion_bucket_id = motion_bucket_id
+        self.downscale = downscale
         
     def initialize_pipeline(self):
         """Initialize the WanVideo pipeline"""
@@ -125,6 +126,7 @@ class StreamingVideoProcessor:
                 switch_DiT_boundary=self.boundary,
                 sigma_shift=self.sigma_shift,
                 motion_bucket_id=self.motion_bucket_id,
+                downscale=self.downscale,
             )
             video_clip = video_clip_dict["video"]
             if self.num_motion_latent > 0:
@@ -317,6 +319,12 @@ def main():
         default=None,
         help="Motion bucket ID for controlling motion magnitude (e.g., 127)"
     )
+    gen_parser.add_argument(
+        "--downscale",
+        type=int,
+        default=1,
+        help="Downscaling factor for diffusion process (except last step)"
+    )
     
     while True:
         try:
@@ -346,6 +354,7 @@ def main():
             processor.boundary = gen_args.boundary
             processor.sigma_shift = gen_args.sigma_shift
             processor.motion_bucket_id = gen_args.motion_bucket_id
+            processor.downscale = gen_args.downscale
             
             # Create output directory
             os.makedirs(gen_args.output_root, exist_ok=True)
