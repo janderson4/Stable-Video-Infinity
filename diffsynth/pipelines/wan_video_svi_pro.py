@@ -170,30 +170,6 @@ class WanVideoSviProPipeline(BasePipeline):
         pipe.vram_management_enabled = pipe.check_vram_management_state()
         return pipe
 
-    def downscale_tensor(self, x, scale):
-        if isinstance(x, torch.Tensor):
-            if x.ndim == 5:
-                B, C, F, H, W = x.shape
-                x_reshaped = rearrange(x, "b c f h w -> b (c f) h w")
-                x_down = torch.nn.functional.interpolate(x_reshaped, scale_factor=1/scale, mode='nearest')
-                x_out = rearrange(x_down, "b (c f) h w -> b c f h w", c=C)
-                return x_out
-            elif x.ndim == 4:
-                C, F, H, W = x.shape
-                x_reshaped = rearrange(x, "c f h w -> 1 (c f) h w")
-                x_down = torch.nn.functional.interpolate(x_reshaped, scale_factor=1/scale, mode='nearest')
-                x_out = rearrange(x_down, "1 (c f) h w -> c f h w", c=C)
-                return x_out
-        return x
-
-    def upscale_tensor(self, x, scale):
-        if isinstance(x, torch.Tensor) and x.ndim == 5:
-            B, C, F, H, W = x.shape
-            x_reshaped = rearrange(x, "b c f h w -> (b f) c h w")
-            x_up = torch.nn.functional.interpolate(x_reshaped, scale_factor=scale, mode='bilinear', align_corners=False)
-            x_out = rearrange(x_up, "(b f) c h w -> b c f h w", b=B)
-            return x_out
-        return x
 
     @torch.no_grad()
     def __call__(
@@ -271,8 +247,6 @@ class WanVideoSviProPipeline(BasePipeline):
         # Continuous generation
         prev_last_latent: Optional[torch.Tensor] = None,
         num_motion_latent: Optional[int] = 1,
-        downscale: int = 1,
-        num_steps_full: int = 1,
     ):
         # Scheduler
         self.scheduler.set_timesteps(num_inference_steps, denoising_strength=denoising_strength, shift=sigma_shift)
@@ -311,37 +285,10 @@ class WanVideoSviProPipeline(BasePipeline):
         for unit in self.units:
             inputs_shared, inputs_posi, inputs_nega = self.unit_runner(unit, self, inputs_shared, inputs_posi, inputs_nega)
 
-        # Downscale logic
-        if downscale > 1:
-            inputs_shared_full = inputs_shared.copy()
-            inputs_posi_full = inputs_posi.copy()
-            inputs_nega_full = inputs_nega.copy()
-
-            def apply_downscale(d):
-                new_d = d.copy()
-                for k, v in d.items():
-                    new_d[k] = self.downscale_tensor(v, downscale)
-                if "height" in new_d: new_d["height"] //= downscale
-                if "width" in new_d: new_d["width"] //= downscale
-                return new_d
-
-            inputs_shared = apply_downscale(inputs_shared)
-            inputs_posi = apply_downscale(inputs_posi)
-            inputs_nega = apply_downscale(inputs_nega)
-
         # Denoise
         self.load_models_to_device(self.in_iteration_models)
         models = {name: getattr(self, name) for name in self.in_iteration_models}
         for progress_id, timestep in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
-            # Check for last step upscaling
-            if downscale > 1 and progress_id == max(0, len(self.scheduler.timesteps) - num_steps_full):
-                latents = inputs_shared["latents"]
-                latents_upscaled = self.upscale_tensor(latents, downscale)
-                inputs_shared = inputs_shared_full
-                inputs_posi = inputs_posi_full
-                inputs_nega = inputs_nega_full
-                inputs_shared["latents"] = latents_upscaled
-
             # Switch DiT if necessary
             if timestep.item() < switch_DiT_boundary * 1000 and self.dit2 is not None and not models["dit"] is self.dit2:
                 self.load_models_to_device(self.in_iteration_models_2)
